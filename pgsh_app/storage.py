@@ -1,9 +1,13 @@
 import json
 import os
 
-_DIR = os.path.dirname(os.path.abspath(__file__))
-_TOKEN_FILE = os.path.join(_DIR, '..', '.token')
-_DEVICES_FILE = os.path.join(_DIR, '..', '.devices.json')
+_DATA_DIR = os.path.join(os.path.expanduser('~'), '.pgsh')
+_TOKEN_FILE = os.path.join(_DATA_DIR, 'token')
+_DEVICES_FILE = os.path.join(_DATA_DIR, 'devices.json')
+
+
+def _ensure_dir():
+    os.makedirs(_DATA_DIR, exist_ok=True)
 
 
 def load_token() -> str | None:
@@ -13,6 +17,7 @@ def load_token() -> str | None:
 
 
 def save_token(token: str):
+    _ensure_dir()
     with open(_TOKEN_FILE, 'w', encoding='utf-8') as f:
         f.write(token)
 
@@ -25,5 +30,6 @@ def load_devices() -> list[dict]:
 
 
 def save_devices(devices: list[dict]):
+    _ensure_dir()
     with open(_DEVICES_FILE, 'w', encoding='utf-8') as f:
         json.dump(devices, f, ensure_ascii=False, indent=2)
