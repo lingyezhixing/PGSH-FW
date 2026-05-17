@@ -1,0 +1,8 @@
+.token
+.devices.json
+pgsh.py
+DEV.md
+.git
+.gitignore
+*.pyc
+__pycache__
