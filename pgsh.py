@@ -1,11 +1,14 @@
 import requests
 import time
 import json
+import os
 from jsonpath_ng import parse
 import traceback
 
+TOKEN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.token')
+
 # ip=47.110.172.244
-shopID = "202011211129580000018669638151" # 店铺ID
+shopID = "202604301214560000022956680655" # 店铺ID
 
 CYAN = '\033[96m'
 MAGENTA = '\033[95m'
@@ -52,6 +55,8 @@ def login():
         gettoken = json.loads(res.text)["data"]["token"]
         print("\n\ntoken = ", gettoken)
         token = gettoken
+        with open(TOKEN_FILE, 'w') as f:
+            f.write(token)
     except Exception as e:
         print("【登录/获取token】环节出错")
         print_json(res.json() if 'res' in locals() else {})
@@ -359,9 +364,26 @@ def afterpay(sku):
 try:
     t = str(int(time.time() * 1000))
 
-    # 自行填写token或使用login函数获得新token（新token不会覆盖以前的，可以不用每次都重接收）
-    token=''
-    login()
+    # 从本地文件读取token
+    token = open(TOKEN_FILE).read().strip() if os.path.exists(TOKEN_FILE) else ''
+    if token:
+        headers = {
+            'Authorization': token,
+            'Version': '1.59.3',
+            'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+            'User-Agent': 'okhttp/3.14.9',
+            'timestamp': t,
+            'Host': 'userapi.qiekj.com',
+            'channel': 'channel',
+            'phoneBrand': 'Redmi'
+        }
+        resp = requests.post('https://userapi.qiekj.com/user/balance',
+                             headers=headers, data={'token': token})
+        if resp.json().get('code') == 2:
+            print("token已过期，请重新登录")
+            login()
+    else:
+        login()
     query_balance() # tokenCoin是小票, integral是积分（网上有刷积分的脚本，不怕封号可以用） integralAmount是积分可抵的价格
 
     print("1 - 所有商品")
