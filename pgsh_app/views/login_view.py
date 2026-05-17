@@ -57,6 +57,10 @@ class LoginPage(ft.Column):
             self._code_inputs,
             alignment=ft.MainAxisAlignment.CENTER, spacing=10,
         )
+        self._spinner = ft.Container(
+            content=ft.ProgressRing(color=_ACCENT, width=48, height=48),
+            visible=False, height=60, alignment=ft.Alignment(0, 0),
+        )
         self._tail_text = ft.Text("验证码已发送至尾号 ****",
                                   size=13, color=ft.Colors.GREY_500)
         self._verify_error = ft.Text(size=12, color=ft.Colors.RED_400)
@@ -67,6 +71,7 @@ class LoginPage(ft.Column):
             self._tail_text,
             ft.Container(height=20),
             self._code_row,
+            self._spinner,
             ft.Container(height=8),
             self._verify_error,
             ft.Container(height=16),
@@ -156,12 +161,21 @@ class LoginPage(ft.Column):
 
     def _auto_login(self):
         code = self._get_code()
+        self._code_row.visible = False
+        self._spinner.visible = True
+        self._page.update()
+        self._page.run_task(self._do_login, code)
+
+    async def _do_login(self, code: str):
         try:
-            token = self._api.login(self._phone, code)
+            token = await asyncio.to_thread(self._api.login, self._phone, code)
             storage.save_token(token)
             self._on_success()
         except Exception:
-            self._page.run_task(self._shake_and_error)
+            self._code_row.visible = True
+            self._spinner.visible = False
+            self._page.update()
+            await self._shake_and_error()
 
     def _resend(self, _e):
         try:

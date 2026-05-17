@@ -15,6 +15,7 @@ class HomePage(ft.Column):
         self._page = page
         self._api = api
         self._alipay_signed = False
+        self._balance = None
         self.spacing = 0
         self.scroll = ft.ScrollMode.AUTO
         self.padding = 0
@@ -142,6 +143,7 @@ class HomePage(ft.Column):
         self._update_sign_status()
         self._update_balance()
         self._load_devices()
+        self._check_balance_warning()
 
     # ---- 余额 ----
 
@@ -155,10 +157,31 @@ class HomePage(ft.Column):
 
     def _update_balance(self):
         try:
-            b = self._api.get_balance()
-            self._balance_text.value = f"¥{b['token_coin']:.2f}"
+            self._balance = self._api.get_balance()
+            self._balance_text.value = f"¥{self._balance['token_coin']:.2f}"
         except Exception:
+            self._balance = None
             self._balance_text.value = "获取失败"
+        self._page.update()
+
+    def _check_balance_warning(self):
+        if not self._balance:
+            return
+        if not self._alipay_signed and self._balance['token_coin'] < _BALANCE_THRESHOLD:
+            dialog = ft.AlertDialog(
+                title=ft.Text("余额不足"),
+                content=ft.Text(f"当前余额 ¥{self._balance['token_coin']:.2f}，"
+                                f"低于 ¥{_BALANCE_THRESHOLD:.2f}，请尽快充值或开通免密支付"),
+                actions=[
+                    ft.TextButton("知道了", on_click=lambda _: self._close_dialog(dialog)),
+                ],
+            )
+            self._page.overlay.append(dialog)
+            dialog.open = True
+            self._page.update()
+
+    def _close_dialog(self, dialog):
+        dialog.open = False
         self._page.update()
 
     # ---- 设备列表 ----
@@ -191,16 +214,6 @@ class HomePage(ft.Column):
     # ---- 出水 ----
 
     def _dispense(self, goods_id: str):
-        if not self._alipay_signed:
-            try:
-                b = self._api.get_balance()
-                if b['token_coin'] < _BALANCE_THRESHOLD:
-                    self._show_toast(
-                        f"余额不足 ¥{_BALANCE_THRESHOLD:.2f}（当前 ¥{b['token_coin']:.2f}），请充值或开通免密支付")
-                    return
-            except Exception:
-                pass
-
         self._show_toast("正在出水，请稍候...")
         try:
             result = self._api.dispense(goods_id)
