@@ -7,7 +7,6 @@ from .. import storage
 from ..api import QiekjAPI
 
 _ACCENT = '#2196F3'
-_BALANCE_THRESHOLD = 0.2
 
 
 class HomePage(ft.Column):
@@ -25,7 +24,7 @@ class HomePage(ft.Column):
         self._balance_text = ft.Text("加载中...", size=15, color=ft.Colors.WHITE,
                                      weight=ft.FontWeight.W_600)
         self._sign_badge = ft.Container(
-            content=ft.Text("免密", size=10, color=ft.Colors.WHITE,
+            content=ft.Text("免密", size=11, color=ft.Colors.WHITE,
                             weight=ft.FontWeight.BOLD),
             bgcolor=ft.Colors.with_opacity(0.35, ft.Colors.WHITE),
             border_radius=6,
@@ -147,12 +146,17 @@ class HomePage(ft.Column):
 
     # ---- 公共方法 ----
 
-    def load(self):
+    def load(self, initial_balance=None):
         self._aliases = storage.load_aliases()
         self._update_sign_status()
-        self._update_balance()
+        if initial_balance is not None:
+            self._balance = initial_balance
+            self._balance_text.value = f"¥{self._balance['token_coin']:.2f}"
+            self._page.update()
+        else:
+            self._update_balance()
         self._load_devices()
-        self._check_balance_warning()
+        self._check_warnings()
 
     # ---- 别名 ----
 
@@ -203,21 +207,25 @@ class HomePage(ft.Column):
             self._balance_text.value = "获取失败"
         self._page.update()
 
-    def _check_balance_warning(self):
-        if not self._balance:
+    def _check_warnings(self):
+        if self._alipay_signed:
             return
-        if not self._alipay_signed and self._balance['token_coin'] < _BALANCE_THRESHOLD:
-            dialog = ft.AlertDialog(
-                title=ft.Text("余额不足"),
-                content=ft.Text(f"当前余额 ¥{self._balance['token_coin']:.2f}，"
-                                f"低于 ¥{_BALANCE_THRESHOLD:.2f}，请尽快充值或开通免密支付"),
-                actions=[
-                    ft.TextButton("知道了", on_click=lambda _: self._close_dialog(dialog)),
-                ],
-            )
-            self._page.overlay.append(dialog)
-            dialog.open = True
-            self._page.update()
+        dialog = ft.AlertDialog(
+            title=ft.Text("未开通支付宝免密"),
+            content=ft.Text("饮水机使用后需要自动扣款，请先在胖乖生活 App 中开通支付宝免密支付"),
+            actions=[
+                ft.TextButton("退出", on_click=lambda _: self._exit_app(dialog),
+                              style=ft.ButtonStyle(color=ft.Colors.RED_400)),
+            ],
+        )
+        self._page.overlay.append(dialog)
+        dialog.open = True
+        self._page.update()
+
+    def _exit_app(self, dialog):
+        dialog.open = False
+        self._page.update()
+        self._page.run_task(self._page.window.destroy)
 
     def _close_dialog(self, dialog):
         dialog.open = False

@@ -57,9 +57,16 @@ class QiekjAPI:
         self.token = token
         return token
 
-    def check_token(self) -> bool:
+    def check_token(self) -> dict | None:
         resp = self._post('/user/balance', {'token': self.token})
-        return resp.get('code') != 2
+        if resp.get('code') == 2:
+            return None
+        data = resp.get('data') or {}
+        return {
+            'token_coin': data.get('tokenCoin', 0) / 100,
+            'integral': data.get('integral', 0),
+            'integral_amount': data.get('integralAmount'),
+        }
 
     def check_alipay_sign(self) -> bool:
         resp = self._post('/alipay/isSign', {'token': self.token})
@@ -168,9 +175,9 @@ class QiekjAPI:
         amount = sync_data.get('amount')
 
         if amount is None:
-            return '启动完成，本次未出水'
+            raise RuntimeError('出水异常，机器未返回出水量')
         if amount == 0:
-            return '出水完成，本次免费'
+            return '本次未出水'
 
         if identify:
             if on_status:
@@ -182,12 +189,12 @@ class QiekjAPI:
                 sync_resp = self._post('/order/sync', {
                     'orderNo': identify, 'payType': '0', 'token': self.token,
                 })
-                if sync_resp.get('code') == 0:
+                if (sync_resp.get('data') or {}).get('code') == 0:
                     break
                 time.sleep(1)
 
             detail = self._post('/order/detail', {
-                'orderNo': identify, 'token': self.token,
+                'orderId': identify, 'token': self.token,
             })
             return self._format_cost(detail)
 

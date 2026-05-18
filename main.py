@@ -4,8 +4,6 @@ from pgsh_app import storage
 from pgsh_app.views.home_view import HomePage
 from pgsh_app.views.login_view import LoginPage
 
-_ACCENT = '#2196F3'
-
 
 def main(page: ft.Page):
     page.title = "胖乖饮水"
@@ -17,12 +15,12 @@ def main(page: ft.Page):
     login = LoginPage(page, api, on_success=lambda: _switch_to_home())
     home = HomePage(page, api)
 
-    def _switch_to_home():
+    def _switch_to_home(balance=None):
         page.on_keyboard_event = None  # 修复退格键报错：清理登录页残留的键盘事件
         page.floating_action_button = home.fab
         page.controls.clear()
         page.add(ft.SafeArea(content=home, expand=True))
-        home.load()
+        home.load(balance)
 
     def _switch_to_login(reason=''):
         page.on_keyboard_event = None
@@ -34,8 +32,9 @@ def main(page: ft.Page):
     token = storage.load_token()
     if token:
         api.token = token
-        if api.check_token():
-            _switch_to_home()
+        balance = api.check_token()
+        if balance:
+            _switch_to_home(balance)
         else:
             _switch_to_login("登录已过期，请重新登录")
     else:

@@ -15,9 +15,9 @@ class LoginPage(ft.Column):
         self._api = api
         self._on_success = on_success
         self._phone = ''
+        
+        # 让组件占满全屏，并删除统一居中限制，交由内部各自处理
         self.expand = True
-        self.alignment = ft.MainAxisAlignment.CENTER
-        self.horizontal_alignment = ft.CrossAxisAlignment.CENTER
 
         # ---- 步骤一：手机号 ----
         self._phone_field = ft.TextField(
@@ -29,7 +29,9 @@ class LoginPage(ft.Column):
             border_radius=12, text_size=16, width=300, counter='',
         )
         self._phone_error = ft.Text(size=12, color=ft.Colors.RED_400)
-        self._phone_view = ft.Column([
+        
+        # 将输入表单提取出来，内部居中
+        phone_form = ft.Column([
             ft.Icon(ft.Icons.WATER_DROP_ROUNDED, color=_ACCENT, size=48),
             ft.Container(height=8),
             ft.Text("胖乖饮水", size=26, weight=ft.FontWeight.BOLD, color=_ACCENT),
@@ -47,7 +49,14 @@ class LoginPage(ft.Column):
                     shape=ft.RoundedRectangleBorder(radius=12),
                 ),
             ),
-        ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=0)
+        ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, alignment=ft.MainAxisAlignment.CENTER, spacing=0)
+
+        # 使用 Container 将视图撑满并保持内容绝对中心
+        self._phone_view = ft.Container(
+            content=phone_form,
+            expand=True,
+            alignment=ft.Alignment.CENTER
+        )
 
         # ---- 步骤二：验证码 ----
         self._code_inputs = [
@@ -59,12 +68,25 @@ class LoginPage(ft.Column):
         )
         self._spinner = ft.Container(
             content=ft.ProgressRing(color=_ACCENT, width=48, height=48),
-            visible=False, height=60, alignment=ft.Alignment(0, 0),
+            visible=False, height=60, alignment=ft.Alignment.CENTER,
         )
         self._tail_text = ft.Text("验证码已发送至尾号 ****",
                                   size=13, color=ft.Colors.GREY_500)
         self._verify_error = ft.Text(size=12, color=ft.Colors.RED_400)
-        self._verify_view = ft.Column([
+
+        # 返回按钮本身
+        self._back_btn = ft.Container(
+            content=ft.Icon(ft.Icons.ARROW_BACK_ROUNDED, color=ft.Colors.GREY_700, size=22),
+            width=40, height=40, 
+            border=ft.Border.all(1, ft.Colors.GREY_300),
+            border_radius=8,
+            alignment=ft.Alignment.CENTER,
+            on_click=self._go_back,
+            ink=True,
+        )
+
+        # 验证码表单提取出来，内部居中
+        verify_form = ft.Column([
             ft.Icon(ft.Icons.SMS_ROUNDED, color=_ACCENT, size=40),
             ft.Container(height=8),
             ft.Text("输入验证码", size=22, weight=ft.FontWeight.BOLD),
@@ -77,7 +99,28 @@ class LoginPage(ft.Column):
             ft.Container(height=16),
             ft.TextButton("重新发送", on_click=self._resend,
                           style=ft.ButtonStyle(color=_ACCENT)),
-        ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=0)
+        ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, alignment=ft.MainAxisAlignment.CENTER, spacing=0)
+
+        # 核心改动修复区： SafeArea 放到最外层，Stack 在内
+        self._verify_view = ft.SafeArea(
+            expand=True,
+            content=ft.Stack(
+                expand=True, # 确保 Stack 填满安全区屏幕
+                controls=[
+                    # 1. 底层表单，通过 top, bottom, left, right 强制锚定四个角填满全屏
+                    ft.Container(
+                        content=verify_form,
+                        left=0, right=0, top=0, bottom=0, 
+                        alignment=ft.Alignment.CENTER
+                    ),
+                    # 2. 悬浮的按钮区，直接使用 left 和 top 进行绝对定位（距离安全区左上角 20 像素留白）
+                    ft.Container(
+                        content=self._back_btn,
+                        left=20, top=20,
+                    )
+                ]
+            )
+        )
 
         self._page.on_keyboard_event = self._on_key
         self.controls = [self._phone_view]
@@ -132,6 +175,22 @@ class LoginPage(ft.Column):
         await self._code_inputs[0].focus()
 
     # ---- 验证码步骤 ----
+
+    def _go_back(self, _e):
+        # 正在登录中时禁止返回
+        if self._spinner.visible:
+            return
+        
+        self._clear_code()
+        self._verify_error.value = ''
+        self._phone_error.value = ''
+        self.controls = [self._phone_view]
+        self._page.update()
+        self._page.run_task(self._delayed_phone_focus)
+
+    async def _delayed_phone_focus(self):
+        await asyncio.sleep(0.1)
+        await self._phone_field.focus()
 
     def _on_code_input(self, idx: int):
         val = self._code_inputs[idx].value
