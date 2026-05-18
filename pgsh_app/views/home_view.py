@@ -83,11 +83,13 @@ class HomePage(ft.Column):
             buttons.controls.append(self._build_water_button(
                 icon=ft.Icons.AC_UNIT, tooltip="冷水",
                 color=ft.Colors.BLUE_400, goods_id=device['goodsId_cold'],
+                sku=device.get('sku_cold', ''), imei=device.get('imei_cold', ''),
             ))
         if 'goodsId_hot' in device:
             buttons.controls.append(self._build_water_button(
                 icon=ft.Icons.LOCAL_FIRE_DEPARTMENT, tooltip="热水",
                 color=ft.Colors.ORANGE_400, goods_id=device['goodsId_hot'],
+                sku=device.get('sku_hot', ''), imei=device.get('imei_hot', ''),
             ))
 
         return ft.Card(
@@ -112,10 +114,11 @@ class HomePage(ft.Column):
             ),
         )
 
-    def _build_water_button(self, icon, tooltip: str, color, goods_id: str) -> ft.IconButton:
+    def _build_water_button(self, icon, tooltip: str, color, goods_id: str,
+                            sku: str = '', imei: str = '') -> ft.IconButton:
         return ft.IconButton(
             icon=icon, tooltip=tooltip,
-            on_click=lambda _, gid=goods_id: self._dispense(gid),
+            on_click=lambda _, gid=goods_id, s=sku, im=imei: self._dispense(gid, s, im),
             icon_color=ft.Colors.WHITE, icon_size=22,
             style=ft.ButtonStyle(
                 bgcolor=color,
@@ -195,12 +198,37 @@ class HomePage(ft.Column):
             if cached:
                 self._render_devices(cached)
             devices = self._api.get_grouped_devices()
+            cache_map = {(d.get('goodsId_hot'), d.get('goodsId_cold')): d
+                         for d in cached}
+            for dev in devices:
+                key = (dev.get('goodsId_hot'), dev.get('goodsId_cold'))
+                cached_dev = cache_map.get(key)
+                if cached_dev:
+                    for field in ('sku_hot', 'imei_hot', 'sku_cold', 'imei_cold'):
+                        if field in cached_dev and field not in dev:
+                            dev[field] = cached_dev[field]
+            self._enrich_devices(devices)
             storage.save_devices(devices)
             self._render_devices(devices)
         except Exception:
             cached = storage.load_devices()
             if cached:
                 self._render_devices(cached)
+
+    def _enrich_devices(self, devices):
+        for dev in devices:
+            for suffix, gid_key in [('hot', 'goodsId_hot'), ('cold', 'goodsId_cold')]:
+                if gid_key not in dev:
+                    continue
+                sku_key, imei_key = f'sku_{suffix}', f'imei_{suffix}'
+                if sku_key in dev and imei_key in dev:
+                    continue
+                gid = dev[gid_key]
+                try:
+                    dev[sku_key] = self._api.get_sku(gid)
+                    dev[imei_key] = self._api.get_imei(gid)
+                except Exception:
+                    pass
 
     def _render_devices(self, devices: list[dict]):
         self._device_list.controls.clear()
@@ -213,13 +241,17 @@ class HomePage(ft.Column):
 
     # ---- 出水 ----
 
-    def _dispense(self, goods_id: str):
-        self._show_toast("正在出水，请稍候...")
+    def _dispense(self, goods_id: str, sku: str = '', imei: str = ''):
+        self._show_toast("正在启动，请稍候...")
+        self._page.run_task(self._do_dispense, goods_id, sku, imei)
+
+    async def _do_dispense(self, goods_id: str, sku: str = '', imei: str = ''):
         try:
-            result = self._api.dispense(goods_id)
+            result = await asyncio.to_thread(
+                self._api.dispense, goods_id, sku, imei)
             self._show_toast(result)
         except Exception as ex:
-            self._show_toast(f"出水失败: {ex}")
+            self._show_toast(f"启动失败: {ex}")
         self._update_balance()
 
     def _refresh(self, _e):

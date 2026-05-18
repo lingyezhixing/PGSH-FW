@@ -1,5 +1,6 @@
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import requests
 from jsonpath_ng import parse
@@ -111,27 +112,29 @@ class QiekjAPI:
 
     # ---- 出水 ----
 
-    def dispense(self, goods_id: str) -> str:
-        sku = self.get_sku(goods_id)
+    def dispense(self, goods_id: str, sku: str = '', imei: str = '') -> str:
+        if not sku or not imei:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                sku_fut = pool.submit(self.get_sku, goods_id) if not sku else None
+                imei_fut = pool.submit(self.get_imei, goods_id) if not imei else None
+                if sku_fut:
+                    sku = sku_fut.result()
+                if imei_fut:
+                    imei = imei_fut.result()
 
-        # 积分风控
-        self._post('/userIntegral/checkUserIsRisk', {'token': self.token})
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            pool.submit(self._post, '/userIntegral/checkUserIsRisk', {'token': self.token})
+            pool.submit(self._post, '/payChannelRoute/addUserAfterPayChannel', {
+                'method': '15', 'token': self.token,
+            })
+            pool.submit(self._post, '/orderRisk/isCheckLocation', {
+                'categoryCode': '04', 'imei': imei, 'token': self.token,
+            }).result()
 
-        # 支付通道 + 位置校验
-        self._post('/payChannelRoute/addUserAfterPayChannel', {
-            'method': '15', 'token': self.token,
-        })
-        self._post('/orderRisk/isCheckLocation', {
-            'categoryCode': '04', 'imei': self.get_imei(goods_id),
-            'token': self.token,
-        })
-
-        # 解锁出水
         self._post('/goods/water/unlock', {
             'skuId': sku, 'promotions': _PROMOTIONS, 'token': self.token,
         })
 
-        # 轮询出水状态
         for _ in range(60):
             resp = self._post('/goods/water/sync', {
                 'skuId': sku, 'token': self.token,
@@ -140,11 +143,15 @@ class QiekjAPI:
                 break
             time.sleep(1)
 
-        # 结账
         identify = resp.get('data', {}).get('identify')
         amount = resp.get('data', {}).get('amount')
 
-        if amount not in (None, 0) and identify:
+        if amount is None:
+            return '启动完成，本次未出水'
+        if amount == 0:
+            return '出水完成，本次免费'
+
+        if identify:
             resp2 = self._post('/order/afterPay/creating', {
                 'orderNo': identify, 'token': self.token,
             })
@@ -155,7 +162,7 @@ class QiekjAPI:
                 })
                 return self._format_cost(detail)
 
-        return '出水完成，本次免费'
+        return '出水完成，费用未知'
 
     def _format_cost(self, detail: dict) -> str:
         data = detail.get('data', {})

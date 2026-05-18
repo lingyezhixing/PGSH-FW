@@ -1,7 +1,7 @@
 import json
 import os
 
-_DATA_DIR = os.path.join(os.path.expanduser('~'), '.pgsh')
+_DATA_DIR = os.environ.get('FLET_APP_STORAGE_DATA') or os.path.join(os.path.expanduser('~'), '.pgsh')
 _TOKEN_FILE = os.path.join(_DATA_DIR, 'token')
 _DEVICES_FILE = os.path.join(_DATA_DIR, 'devices.json')
 
