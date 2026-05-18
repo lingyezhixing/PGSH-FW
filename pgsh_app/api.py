@@ -10,7 +10,7 @@ BASE_URL = 'https://userapi.qiekj.com'
 _PROMOTIONS = json.dumps([
     {"assetId": "0", "oldPromotionId": "", "orgId": "0", "promotionId": "0", "promotionType": "-6"},
     {"assetId": "0", "oldPromotionId": "", "orgId": "0", "promotionId": "0", "promotionType": "-7"},
-    {"assetId": "0", "oldPromotionId": "0", "orgId": "0", "promotionId": "0", "promotionType": "8"},
+    {"assetId": "0", "oldPromotionId": "0", "orgId": "0", "promotionId": "0", "promotionType": "-8"},
 ])
 
 
@@ -51,7 +51,7 @@ class QiekjAPI:
         resp = self._post('/user/reg', {
             'channel': 'android_app', 'phone': phone, 'verify': code,
         }, auth=False)
-        token = resp.get('data', {}).get('token')
+        token = (resp.get('data') or {}).get('token')
         if not token:
             raise RuntimeError(resp.get('msg', '登录失败'))
         self.token = token
@@ -68,7 +68,7 @@ class QiekjAPI:
     # ---- 余额 ----
 
     def get_balance(self) -> dict:
-        data = self._post('/user/balance', {'token': self.token}).get('data', {})
+        data = self._post('/user/balance', {'token': self.token}).get('data') or {}
         return {
             'token_coin': data.get('tokenCoin', 0) / 100,
             'integral': data.get('integral', 0),
@@ -102,17 +102,24 @@ class QiekjAPI:
         resp = self._post('/goods/normal/skus', {
             'goodsId': goods_id, 'token': self.token,
         })
-        return self._extract(resp, '$.data[0].skuId')[0]
+        res = self._extract(resp, '$.data[0].skuId')
+        if not res:
+            raise RuntimeError(resp.get('msg', '获取 SKU 失败'))
+        return res[0]
 
     def get_imei(self, goods_id: str) -> str:
         resp = self._post('/goods/normal/details', {
             'goodsId': goods_id, 'token': self.token,
         })
-        return self._extract(resp, '$.data.imei')[0]
+        res = self._extract(resp, '$.data.imei')
+        if not res:
+            raise RuntimeError(resp.get('msg', '获取 IMEI 失败'))
+        return res[0]
 
     # ---- 出水 ----
 
-    def dispense(self, goods_id: str, sku: str = '', imei: str = '') -> str:
+    def dispense(self, goods_id: str, sku: str = '', imei: str = '',
+                 on_status=None) -> str:
         if not sku or not imei:
             with ThreadPoolExecutor(max_workers=2) as pool:
                 sku_fut = pool.submit(self.get_sku, goods_id) if not sku else None
@@ -122,29 +129,43 @@ class QiekjAPI:
                 if imei_fut:
                     imei = imei_fut.result()
 
-        with ThreadPoolExecutor(max_workers=3) as pool:
-            pool.submit(self._post, '/userIntegral/checkUserIsRisk', {'token': self.token})
-            pool.submit(self._post, '/payChannelRoute/addUserAfterPayChannel', {
-                'method': '15', 'token': self.token,
-            })
-            pool.submit(self._post, '/orderRisk/isCheckLocation', {
-                'categoryCode': '04', 'imei': imei, 'token': self.token,
-            }).result()
-
-        self._post('/goods/water/unlock', {
+        unlock_resp = self._post('/goods/water/unlock', {
             'skuId': sku, 'promotions': _PROMOTIONS, 'token': self.token,
         })
+        
+        # 修复 NoneType 报错，提前拦截接口错误如“设备使用中”等
+        if unlock_resp.get('code') != 0:
+            raise RuntimeError(unlock_resp.get('msg', '解锁设备失败'))
+            
+        data = unlock_resp.get('data') or {}
+        msg_id = data.get('msgId')
 
+        if msg_id:
+            if on_status:
+                on_status("等待机器响应...")
+            for _ in range(10):
+                resp = self._post('/machine/msg/sync', {
+                    'msgId': msg_id, 'token': self.token,
+                })
+                if resp.get('data'):
+                    break
+                time.sleep(1)
+
+        if on_status:
+            on_status("出水中...")
+            
+        sync_data = {}
         for _ in range(60):
             resp = self._post('/goods/water/sync', {
                 'skuId': sku, 'token': self.token,
             })
-            if resp.get('data', {}).get('workStatus') != 2:
+            sync_data = resp.get('data') or {}
+            if sync_data.get('workStatus') != 2:
                 break
             time.sleep(1)
 
-        identify = resp.get('data', {}).get('identify')
-        amount = resp.get('data', {}).get('amount')
+        identify = sync_data.get('identify')
+        amount = sync_data.get('amount')
 
         if amount is None:
             return '启动完成，本次未出水'
@@ -152,24 +173,32 @@ class QiekjAPI:
             return '出水完成，本次免费'
 
         if identify:
-            resp2 = self._post('/order/afterPay/creating', {
+            if on_status:
+                on_status("结算中...")
+            self._post('/order/afterPay/creating', {
                 'orderNo': identify, 'token': self.token,
             })
-            order_id = resp2.get('data', {}).get('orderId')
-            if order_id:
-                detail = self._post('/order/detail', {
-                    'orderId': order_id, 'token': self.token,
+            for _ in range(10):
+                sync_resp = self._post('/order/sync', {
+                    'orderNo': identify, 'payType': '0', 'token': self.token,
                 })
-                return self._format_cost(detail)
+                if sync_resp.get('code') == 0:
+                    break
+                time.sleep(1)
+
+            detail = self._post('/order/detail', {
+                'orderNo': identify, 'token': self.token,
+            })
+            return self._format_cost(detail)
 
         return '出水完成，费用未知'
 
     def _format_cost(self, detail: dict) -> str:
-        data = detail.get('data', {})
-        items = data.get('tradeOrderItem', [])
+        data = detail.get('data') or {}
+        items = data.get('tradeOrderItem') or []
         origin = items[0].get('originPrice', '?') if items else '?'
         parts = [f'原价: {origin}元']
-        for p in data.get('promotionList', []):
+        for p in (data.get('promotionList') or []):
             pt, da = p.get('promotionType'), p.get('discountAmount', 0)
             if pt == 4:
                 parts.append(f'小票抵扣: {da}')

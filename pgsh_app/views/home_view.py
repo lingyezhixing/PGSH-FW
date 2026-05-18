@@ -1,4 +1,5 @@
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 import flet as ft
 
@@ -76,7 +77,8 @@ class HomePage(ft.Column):
         )
 
     def _build_device_card(self, device: dict) -> ft.Card:
-        name = device.get('name', '未知设备')
+        original_name = device.get('name', '未知设备')
+        display_name = self._aliases.get(original_name, original_name)
         buttons = ft.Row(spacing=12, alignment=ft.MainAxisAlignment.END)
 
         if 'goodsId_cold' in device:
@@ -104,10 +106,13 @@ class HomePage(ft.Column):
                         width=42, height=42,
                         alignment=ft.Alignment(0, 0),
                     ),
-                    ft.Column([
-                        ft.Text(name, size=16, weight=ft.FontWeight.W_600),
-                        ft.Text("饮水机", size=11, color=ft.Colors.GREY_400),
-                    ], spacing=2, expand=True),
+                    ft.Container(
+                        content=ft.Column([
+                            ft.Text(display_name, size=16, weight=ft.FontWeight.W_600),
+                            ft.Text("饮水机", size=11, color=ft.Colors.GREY_400),
+                        ], spacing=2),
+                        expand=True, on_click=lambda _: self._edit_name(original_name),
+                    ),
                     buttons,
                 ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
                 padding=ft.Padding(left=16, top=14, right=16, bottom=14),
@@ -143,10 +148,41 @@ class HomePage(ft.Column):
     # ---- 公共方法 ----
 
     def load(self):
+        self._aliases = storage.load_aliases()
         self._update_sign_status()
         self._update_balance()
         self._load_devices()
         self._check_balance_warning()
+
+    # ---- 别名 ----
+
+    def _edit_name(self, original_name: str):
+        field = ft.TextField(
+            value=self._aliases.get(original_name, original_name),
+            autofocus=True, border_radius=8, text_size=14,
+        )
+        dialog = ft.AlertDialog(
+            title=ft.Text("修改名称"),
+            content=ft.Column([field], tight=True),
+            actions=[
+                ft.TextButton("取消", on_click=lambda _: self._close_dialog(dialog)),
+                ft.TextButton("保存", on_click=lambda _: self._save_alias(original_name, field.value, dialog)),
+            ],
+        )
+        self._page.overlay.append(dialog)
+        dialog.open = True
+        self._page.update()
+
+    def _save_alias(self, original_name: str, new_name: str, dialog):
+        if new_name and new_name != original_name:
+            self._aliases[original_name] = new_name
+            storage.save_aliases(self._aliases)
+        elif original_name in self._aliases:
+            del self._aliases[original_name]
+            storage.save_aliases(self._aliases)
+        dialog.open = False
+        self._render_devices(storage.load_devices())
+        self._page.update()
 
     # ---- 余额 ----
 
@@ -197,7 +233,11 @@ class HomePage(ft.Column):
             cached = storage.load_devices()
             if cached:
                 self._render_devices(cached)
-            devices = self._api.get_grouped_devices()
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                devices_fut = pool.submit(self._api.get_grouped_devices)
+                pool.submit(self._api._post, '/payChannelRoute/addUserAfterPayChannel',
+                            {'method': '15', 'token': self._api.token})
+                devices = devices_fut.result()
             cache_map = {(d.get('goodsId_hot'), d.get('goodsId_cold')): d
                          for d in cached}
             for dev in devices:
@@ -242,14 +282,16 @@ class HomePage(ft.Column):
     # ---- 出水 ----
 
     def _dispense(self, goods_id: str, sku: str = '', imei: str = ''):
-        self._show_toast("正在启动，请稍候...")
+        self._show_toast("正在解锁...", duration=0)
         self._page.run_task(self._do_dispense, goods_id, sku, imei)
 
     async def _do_dispense(self, goods_id: str, sku: str = '', imei: str = ''):
+        def on_status(msg):
+            self._show_toast(msg, duration=0)
         try:
             result = await asyncio.to_thread(
-                self._api.dispense, goods_id, sku, imei)
-            self._show_toast(result)
+                self._api.dispense, goods_id, sku, imei, on_status)
+            self._show_toast(result, duration=5)
         except Exception as ex:
             self._show_toast(f"启动失败: {ex}")
         self._update_balance()
@@ -260,7 +302,7 @@ class HomePage(ft.Column):
 
     # ---- Toast 通知 ----
 
-    def _show_toast(self, msg: str):
+    def _show_toast(self, msg: str, duration: float = 3):
         overlay = self._page.overlay
         for c in list(overlay):
             if getattr(c, '_is_toast', False):
@@ -279,10 +321,11 @@ class HomePage(ft.Column):
         toast._is_toast = True
         overlay.append(toast)
         self._page.update()
-        self._page.run_task(self._hide_toast, toast)
+        if duration > 0:
+            self._page.run_task(self._hide_toast, toast, duration)
 
-    async def _hide_toast(self, toast):
-        await asyncio.sleep(3)
+    async def _hide_toast(self, toast, delay: float = 3):
+        await asyncio.sleep(delay)
         if toast in self._page.overlay:
             self._page.overlay.remove(toast)
             self._page.update()

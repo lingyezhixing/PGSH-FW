@@ -18,12 +18,14 @@ def main(page: ft.Page):
     home = HomePage(page, api)
 
     def _switch_to_home():
+        page.on_keyboard_event = None  # 修复退格键报错：清理登录页残留的键盘事件
         page.floating_action_button = home.fab
         page.controls.clear()
         page.add(ft.SafeArea(content=home, expand=True))
         home.load()
 
     def _switch_to_login(reason=''):
+        page.on_keyboard_event = None
         page.floating_action_button = None
         page.controls.clear()
         page.add(ft.SafeArea(content=login, expand=True))
